@@ -17,6 +17,8 @@ enum Preferences {
         static let recentAppsLimit = "recentAppsLimit"
         static let launchCount = "launchCount"
         static let hasDonated = "hasDonated"
+        static let excludedBundleIDs = "excludedBundleIDs"
+        static let showAllRunningApps = "showAllRunningApps"
     }
 
     private static let defaults = UserDefaults.standard
@@ -31,6 +33,8 @@ enum Preferences {
             // The count is registered but the switch is not: the cap ships off,
             // and this is the number it takes when first turned on.
             Key.recentAppsLimit: 7,
+            Key.excludedBundleIDs: ["com.apple.mail", "com.apple.iCal", "com.apple.news"],
+            Key.showAllRunningApps: true,
         ])
     }
 
@@ -80,6 +84,20 @@ enum Preferences {
     static var recentAppsLimit: Int {
         get { defaults.integer(forKey: Key.recentAppsLimit) }
         set { defaults.set(newValue, forKey: Key.recentAppsLimit) }
+    }
+
+    /// Bundle IDs never shown in the switcher, whatever their windows or badges.
+    static var excludedBundleIDs: Set<String> {
+        get { Set(defaults.stringArray(forKey: Key.excludedBundleIDs) ?? []) }
+        set { defaults.set(newValue.sorted(), forKey: Key.excludedBundleIDs) }
+    }
+
+    /// List every running regular app, including hidden and windowless ones, like
+    /// the native Cmd+Tab. Off restores the original "visible windows only" filter
+    /// (and with it `hideMinimizedOnlyApps`). Defaults to true.
+    static var showAllRunningApps: Bool {
+        get { defaults.bool(forKey: Key.showAllRunningApps) }
+        set { defaults.set(newValue, forKey: Key.showAllRunningApps) }
     }
 
     static var launchCount: Int {

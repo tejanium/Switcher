@@ -94,24 +94,31 @@ class AppListProvider {
     /// even with no window at all. `--list-apps` reports from this, so it can show
     /// what the cap cut rather than losing those apps.
     static func allVisibleApps() -> [AppInfo] {
-        let visiblePIDs = getVisibleWindowPIDs()
+        let showAll = Preferences.showAllRunningApps
+        // The window query is the expensive part; skip it when every app is listed.
+        let visiblePIDs = showAll ? [] : getVisibleWindowPIDs()
         let badges = getDockBadgesCached()
         let selfPID = ProcessInfo.processInfo.processIdentifier
+        let excluded = Preferences.excludedBundleIDs
 
         let apps = NSWorkspace.shared.runningApplications.compactMap { app -> AppInfo? in
             // .regular excludes background and accessory apps (which includes us).
             guard app.activationPolicy == .regular else { return nil }
 
-            guard !app.isHidden else { return nil }
+            guard !excluded.contains(app.bundleIdentifier ?? "") else { return nil }
 
             guard app.processIdentifier != selfPID else { return nil }
 
             let badge = badges[app.bundleIdentifier ?? ""]
 
-            let hasVisibleWindow = visiblePIDs.contains(app.processIdentifier)
-            let hasBadge = badge != nil
+            if !showAll {
+                guard !app.isHidden else { return nil }
 
-            guard hasVisibleWindow || hasBadge else { return nil }
+                let hasVisibleWindow = visiblePIDs.contains(app.processIdentifier)
+                let hasBadge = badge != nil
+
+                guard hasVisibleWindow || hasBadge else { return nil }
+            }
 
             // Get app info. The icon's logical size is left alone: AppItemView
             // sizes it via constraints (mutating app.icon would touch a shared
