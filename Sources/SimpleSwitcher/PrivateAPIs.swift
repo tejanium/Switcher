@@ -15,6 +15,7 @@ enum CGSSymbolicHotKey: Int, CaseIterable {
 @_silgen_name("CGSSetSymbolicHotKeyEnabled") @discardableResult
 func CGSSetSymbolicHotKeyEnabled(_ hotKey: CGSSymbolicHotKey.RawValue, _ isEnabled: Bool) -> Int32
 
+/// Cmd+` is included: Switcher replaces it with its own window switcher.
 func setNativeCommandTabEnabled(_ isEnabled: Bool) {
     for hotkey in CGSSymbolicHotKey.allCases {
         CGSSetSymbolicHotKeyEnabled(hotkey.rawValue, isEnabled)

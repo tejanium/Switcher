@@ -11,6 +11,9 @@ protocol HotkeyManagerDelegate: AnyObject {
     /// expand the current session to it (while active). Only registered while
     /// the recent-apps cap is on — it's the cap's escape hatch.
     func hotkeyTriggeredShowAll()
+    /// Cmd+` / Cmd+Shift+`: open the window switcher (from idle), or step it —
+    /// and while the app switcher is open, step that one backward/forward.
+    func windowHotkeyTriggered(reverse: Bool)
     func modifierKeyReleased()
     func keyPressed(_ keyCode: UInt16)
     /// Shift pressed and released while Cmd is held, with no Shift+Tab in
@@ -32,6 +35,8 @@ class HotkeyManager {
     private var tabHotKeyRef: EventHotKeyRef?
     private var shiftTabHotKeyRef: EventHotKeyRef?
     private var showAllHotKeyRef: EventHotKeyRef?
+    private var graveHotKeyRef: EventHotKeyRef?
+    private var shiftGraveHotKeyRef: EventHotKeyRef?
     private var activeHotKeyRefs: [EventHotKeyRef?] = []
     private var eventTap: CFMachPort?
 
@@ -94,6 +99,8 @@ class HotkeyManager {
         case m = 12         // Cmd+M - minimize every window of the selected app
         case comma = 13     // Cmd+, - open Preferences (the macOS-wide convention)
         case showAll = 14   // Cmd+Opt+Tab - open/expand the full uncapped list
+        case grave = 15     // Cmd+` - window switcher / previous app
+        case shiftGrave = 16 // Cmd+Shift+` - window switcher backward / next app
     }
 
     // Map hotkey IDs to key codes for delegate
@@ -124,7 +131,7 @@ class HotkeyManager {
         kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9,
         kVK_ANSI_Minus, kVK_ANSI_Equal, kVK_ANSI_LeftBracket, kVK_ANSI_RightBracket,
         kVK_ANSI_Backslash, kVK_ANSI_Semicolon, kVK_ANSI_Quote,
-        kVK_ANSI_Period, kVK_ANSI_Slash, kVK_ANSI_Grave,
+        kVK_ANSI_Period, kVK_ANSI_Slash,
         kVK_Space, kVK_Delete, kVK_ForwardDelete,
     ]
 
@@ -137,6 +144,11 @@ class HotkeyManager {
             UnregisterEventHotKey(ref)
             shiftTabHotKeyRef = nil
         }
+        for ref in [graveHotKeyRef, shiftGraveHotKeyRef] {
+            if let ref { UnregisterEventHotKey(ref) }
+        }
+        graveHotKeyRef = nil
+        shiftGraveHotKeyRef = nil
         unregisterShowAllHotkey()
 
         unregisterActiveHotkeys()
@@ -295,6 +307,14 @@ class HotkeyManager {
                     DispatchQueue.main.async {
                         manager.delegate?.hotkeyTriggeredReverse()
                     }
+                } else if id.id == HotkeyID.grave.rawValue || id.id == HotkeyID.shiftGrave.rawValue {
+                    // Shift+` must not also count as a bare Shift tap (double step).
+                    let reverse = id.id == HotkeyID.shiftGrave.rawValue
+                    manager.isActive = true
+                    if reverse { manager.noteShiftTabHotkey() }
+                    DispatchQueue.main.async {
+                        manager.delegate?.windowHotkeyTriggered(reverse: reverse)
+                    }
                 } else if id.id == HotkeyID.showAll.rawValue {
                     manager.isActive = true
                     DispatchQueue.main.async {
@@ -329,6 +349,13 @@ class HotkeyManager {
         RegisterEventHotKey(UInt32(kVK_Tab), UInt32(cmdKey), id, eventTarget, UInt32(kEventHotKeyNoOptions), &tabHotKeyRef)
         let shiftId = EventHotKeyID(signature: HotkeyManager.signature, id: HotkeyID.shiftTab.rawValue)
         RegisterEventHotKey(UInt32(kVK_Tab), UInt32(cmdKey | shiftKey), shiftId, eventTarget, UInt32(kEventHotKeyNoOptions), &shiftTabHotKeyRef)
+
+        // Cmd+` / Cmd+Shift+`: the window switcher (native Cmd+` is disabled with
+        // Cmd+Tab). Global, so the same keys also step the app switcher when open.
+        let graveId = EventHotKeyID(signature: HotkeyManager.signature, id: HotkeyID.grave.rawValue)
+        RegisterEventHotKey(UInt32(kVK_ANSI_Grave), UInt32(cmdKey), graveId, eventTarget, UInt32(kEventHotKeyNoOptions), &graveHotKeyRef)
+        let shiftGraveId = EventHotKeyID(signature: HotkeyManager.signature, id: HotkeyID.shiftGrave.rawValue)
+        RegisterEventHotKey(UInt32(kVK_ANSI_Grave), UInt32(cmdKey | shiftKey), shiftGraveId, eventTarget, UInt32(kEventHotKeyNoOptions), &shiftGraveHotKeyRef)
 
         // ⌥⌘Tab is the recent-apps cap's escape hatch; a Carbon hotkey steals the
         // combo system-wide, so don't squat it for users who never enable the cap.

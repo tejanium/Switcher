@@ -6,11 +6,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate, AppSw
     enum State {
         case idle
         case active
+        case windows  // the Cmd+` window switcher is open
     }
 
     private var state: State = .idle
     private var hotkeyManager: HotkeyManager!
     private var panel: AppSwitcherPanel!
+    private var windowPanel: WindowSwitcherPanel!
+    // The app whose windows the window switcher is showing.
+    private var windowApp: NSRunningApplication?
     private var currentApps: [AppInfo] = []
     private var statusBarController: StatusBarController!
     private var prefsWindowController: PreferencesWindowController!
@@ -55,6 +59,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate, AppSw
         // Create panel (hidden initially)
         panel = AppSwitcherPanel()
         panel.panelDelegate = self
+        windowPanel = WindowSwitcherPanel()
 
         // Set app to accessory (no dock icon)
         NSApp.setActivationPolicy(.accessory)
@@ -118,6 +123,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate, AppSw
     // MARK: - HotkeyManagerDelegate
 
     func hotkeyTriggered() {
+        if state == .windows { return }
         // HotkeyManager already set isActive = true
         guard state == .idle else {
             // Already active - Cmd+Tab pressed again, select next app
@@ -128,6 +134,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate, AppSw
     }
 
     func hotkeyTriggeredReverse() {
+        if state == .windows { return }
         // Cmd+Shift+Tab: same as hotkeyTriggered but cycling backward.
         guard state == .idle else {
             panel.selectPrevious()
@@ -137,6 +144,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate, AppSw
     }
 
     func hotkeyTriggeredShowAll() {
+        if state == .windows { return }
         // HotkeyManager already set isActive = true
         guard state == .idle else {
             if expandedSession {
@@ -150,6 +158,51 @@ class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate, AppSw
             return
         }
         openPanel(reverse: false, expanded: true)
+    }
+
+    func windowHotkeyTriggered(reverse: Bool) {
+        // HotkeyManager already set isActive = true
+        switch state {
+        case .active:
+            // As in the native switcher: ` steps back, Shift+` forward.
+            reverse ? panel.selectNext() : panel.selectPrevious()
+        case .windows:
+            reverse ? windowPanel.selectPrevious() : windowPanel.selectNext()
+        case .idle:
+            openWindowPanel(reverse: reverse)
+        }
+    }
+
+    /// Show the frontmost app's windows. Opens on the next window (or the last
+    /// for reverse), like native Cmd+`; with one window there's nothing to switch.
+    private func openWindowPanel(reverse: Bool) {
+        guard let app = NSWorkspace.shared.frontmostApplication else {
+            hotkeyManager.isActive = false
+            return
+        }
+        let windows = WindowListProvider.windows(of: app)
+        guard windows.count > 1 else {
+            hotkeyManager.isActive = false
+            return
+        }
+        windowApp = app
+        windowPanel.show(windows, selectIndex: reverse ? windows.count - 1 : 1)
+        state = .windows
+        hotkeyManager.registerActiveHotkeys()  // Escape / Return / arrows
+    }
+
+    private func focusSelectedWindow() {
+        if let window = windowPanel.selectedWindow, let app = windowApp {
+            WindowListProvider.focus(window, of: app)
+        }
+    }
+
+    private func dismissWindowPanel() {
+        windowPanel.hidePanel()
+        windowApp = nil
+        state = .idle
+        hotkeyManager.isActive = false
+        hotkeyManager.unregisterActiveHotkeys()
     }
 
     /// Snapshot the visible apps and show the panel. Forward opens on the
@@ -182,6 +235,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate, AppSw
     }
 
     func modifierKeyReleased() {
+        if state == .windows {
+            focusSelectedWindow()
+            dismissWindowPanel()
+            return
+        }
         guard state == .active else { return }
 
         if let selectedApp = panel.getSelectedApp() {
@@ -192,11 +250,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate, AppSw
     }
 
     func shiftTapped() {
+        if state == .windows {
+            windowPanel.selectPrevious()
+            return
+        }
         guard state == .active else { return }
         panel.selectPrevious()
     }
 
     func mouseClicked() {
+        if state == .windows {
+            if let index = windowPanel.windowIndex(at: NSEvent.mouseLocation) {
+                windowPanel.select(index)
+                focusSelectedWindow()
+            }
+            dismissWindowPanel()
+            return
+        }
         guard state == .active else { return }
 
         // Use NSEvent.mouseLocation for consistent coordinate system with panel.frame
@@ -225,6 +295,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate, AppSw
     }
 
     func keyPressed(_ keyCode: UInt16) {
+        if state == .windows {
+            switch Int(keyCode) {
+            case kVK_Escape:
+                dismissWindowPanel()
+            case kVK_Return:
+                focusSelectedWindow()
+                dismissWindowPanel()
+            case kVK_UpArrow, kVK_LeftArrow:
+                windowPanel.selectPrevious()
+            case kVK_DownArrow, kVK_RightArrow:
+                windowPanel.selectNext()
+            default:
+                break
+            }
+            return
+        }
         guard state == .active else { return }
 
         switch Int(keyCode) {
@@ -300,6 +386,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate, AppSw
     // MARK: - Private Methods
 
     private func activateApp(_ appInfo: AppInfo) {
+        // Hidden apps are listed when showAllRunningApps is on; like native
+        // Cmd+Tab, switching to one brings it back.
+        if appInfo.app.isHidden { appInfo.app.unhide() }
         appInfo.app.activate(options: [.activateIgnoringOtherApps])
     }
 
