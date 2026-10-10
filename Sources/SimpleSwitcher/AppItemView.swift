@@ -40,7 +40,8 @@ class AppItemView: NSView {
 
     private func setupViews() {
         wantsLayer = true
-        layer?.cornerRadius = 8
+        layer?.cornerRadius = itemSize * 0.24
+        layer?.cornerCurve = .continuous
 
         iconImageView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(iconImageView)

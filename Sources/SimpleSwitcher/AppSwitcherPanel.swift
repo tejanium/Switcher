@@ -15,7 +15,16 @@ class AppSwitcherPanel: NSPanel, AppItemViewDelegate {
     private var verticalStackView: NSStackView!  // Contains row stack views
     private var selectedRow: Int = 0
     private var selectedColumn: Int = 0
-    private var visualEffectView: NSVisualEffectView!
+    // Content container (also the hover tracker). Sits inside Liquid Glass on
+    // macOS 26+, or a HUD NSVisualEffectView before that.
+    private var visualEffectView: NSView!
+    private var glassView: NSView?  // NSGlassEffectView on macOS 26+
+    private var frostedView: NSView?  // blur inside the glass, clipped to its shape
+    private var nameLabelCenterX: NSLayoutConstraint?
+    // Selected app's name under the icons, like the native switcher.
+    private let nameLabel = NSTextField(labelWithString: "")
+    private let nameLabelHeight: CGFloat = 18
+    private let nameLabelSpacing: CGFloat = 4
 
     // Subtle "hide others to declutter" reminder shown at the bottom of the panel
     // only when the switcher has grown cluttered (2+ rows) and the pref is enabled.
@@ -48,16 +57,17 @@ class AppSwitcherPanel: NSPanel, AppItemViewDelegate {
     // Max items per row, computed from screen width in showWithApps and reused by
     // appendApps so live-added apps pack into rows the same way.
     private var itemsPerRow: Int = 1
-    private let itemSpacing: CGFloat = 0
+    // Gap between tiles, proportional like the native switcher.
+    private var itemSpacing: CGFloat { (itemSize * 0.1).rounded() }
     private let rowSpacing: CGFloat = 4
-    private let panelPadding: CGFloat = 10
+    private let panelPadding: CGFloat = 18
     private let deadZoneThreshold: CGFloat = 3
     private let screenMarginPercent: CGFloat = 0.85  // Use max 85% of screen width
 
     // Icon scaling: base size on a reference-height display, scaled up for
     // larger monitors so icons stay legible. Floored at the base so laptops
     // and standard displays never shrink; capped so it can't get absurd.
-    private let baseItemSize: CGFloat = 76
+    private let baseItemSize: CGFloat = 96
     private let maxItemSize: CGFloat = 160
     private let referenceScreenHeight: CGFloat = 1080
 
@@ -91,27 +101,61 @@ class AppSwitcherPanel: NSPanel, AppItemViewDelegate {
     }
 
     private func setupVisualEffectView() {
-        let effectView = HoverTrackingVisualEffectView()
-        effectView.onMouseMovement = { [weak self] in self?.handleMouseMoved() }
-        visualEffectView = effectView
-        visualEffectView.material = .hudWindow
-        visualEffectView.state = .active
-        visualEffectView.blendingMode = .behindWindow
-        visualEffectView.wantsLayer = true
-        visualEffectView.maskImage = maskImage(cornerRadius: 16)
+        let container = HoverTrackingView()
+        container.onMouseMovement = { [weak self] in self?.handleMouseMoved() }
+        visualEffectView = container
+
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            // Plain glass is see-through with lensing; the native switcher is
+            // heavily frosted. A HUD blur under the content gives that, with the
+            // glass supplying the edge highlight. Corner radius tracks the panel
+            // height (see updateCornerRadius).
+            let frosted = NSVisualEffectView()
+            frosted.material = .hudWindow
+            frosted.blendingMode = .behindWindow
+            frosted.state = .active
+            frosted.wantsLayer = true
+            frosted.layer?.masksToBounds = true
+            frosted.layer?.cornerCurve = .continuous
+            container.translatesAutoresizingMaskIntoConstraints = false
+            frosted.addSubview(container)
+            NSLayoutConstraint.activate([
+                container.leadingAnchor.constraint(equalTo: frosted.leadingAnchor),
+                container.trailingAnchor.constraint(equalTo: frosted.trailingAnchor),
+                container.topAnchor.constraint(equalTo: frosted.topAnchor),
+                container.bottomAnchor.constraint(equalTo: frosted.bottomAnchor)
+            ])
+            glass.contentView = frosted
+            frostedView = frosted
+            glassView = glass
+            contentView = glass
+            return
+        }
+
+        let effectView = NSVisualEffectView()
+        effectView.material = .hudWindow
+        effectView.state = .active
+        effectView.blendingMode = .behindWindow
+        effectView.wantsLayer = true
+        effectView.maskImage = maskImage(cornerRadius: 16)
 
         // Add darkening overlay for light mode (transparent in dark mode)
         let darkeningView = AppearanceAdaptiveView()
+        container.translatesAutoresizingMaskIntoConstraints = false
         darkeningView.translatesAutoresizingMaskIntoConstraints = false
-        visualEffectView.addSubview(darkeningView)
-        NSLayoutConstraint.activate([
-            darkeningView.leadingAnchor.constraint(equalTo: visualEffectView.leadingAnchor),
-            darkeningView.trailingAnchor.constraint(equalTo: visualEffectView.trailingAnchor),
-            darkeningView.topAnchor.constraint(equalTo: visualEffectView.topAnchor),
-            darkeningView.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor)
-        ])
+        effectView.addSubview(darkeningView)
+        effectView.addSubview(container)
+        for view in [darkeningView, container] {
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: effectView.leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: effectView.trailingAnchor),
+                view.topAnchor.constraint(equalTo: effectView.topAnchor),
+                view.bottomAnchor.constraint(equalTo: effectView.bottomAnchor)
+            ])
+        }
 
-        contentView = visualEffectView
+        contentView = effectView
     }
 
     private func maskImage(cornerRadius: CGFloat) -> NSImage {
@@ -137,11 +181,21 @@ class AppSwitcherPanel: NSPanel, AppItemViewDelegate {
 
         visualEffectView.addSubview(verticalStackView)
 
+        nameLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        nameLabel.alignment = .center
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        visualEffectView.addSubview(nameLabel)
+
         NSLayoutConstraint.activate([
             verticalStackView.leadingAnchor.constraint(equalTo: visualEffectView.leadingAnchor, constant: panelPadding),
             verticalStackView.trailingAnchor.constraint(equalTo: visualEffectView.trailingAnchor, constant: -panelPadding),
             verticalStackView.topAnchor.constraint(equalTo: visualEffectView.topAnchor, constant: panelPadding),
-            verticalStackView.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor, constant: -panelPadding)
+            nameLabel.topAnchor.constraint(equalTo: verticalStackView.bottomAnchor, constant: nameLabelSpacing),
+            nameLabel.leadingAnchor.constraint(greaterThanOrEqualTo: visualEffectView.leadingAnchor, constant: panelPadding),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: visualEffectView.trailingAnchor, constant: -panelPadding),
+            nameLabel.heightAnchor.constraint(equalToConstant: nameLabelHeight),
+            nameLabel.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor, constant: -panelPadding)
         ])
     }
 
@@ -202,6 +256,7 @@ class AppSwitcherPanel: NSPanel, AppItemViewDelegate {
         let panelY = screenFrame.midY - size.height / 2
 
         setFrame(NSRect(x: panelX, y: panelY, width: size.width, height: size.height), display: true)
+        updateCornerRadius()
 
         // Select initial app (convert flat index to row/column)
         if let position = GridNavigation.initialPosition(flatIndex: selectIndex,
@@ -508,6 +563,15 @@ class AppSwitcherPanel: NSPanel, AppItemViewDelegate {
 
     // MARK: - Private Methods
 
+    /// Rounded like the native switcher: a large radius relative to the panel.
+    private func updateCornerRadius() {
+        if #available(macOS 26.0, *), let glass = glassView as? NSGlassEffectView {
+            let radius = min(frame.height * 0.3, itemSize * 0.6)
+            glass.cornerRadius = radius
+            frostedView?.layer?.cornerRadius = radius
+        }
+    }
+
     /// Panel size from the current `rows`, adding a row for the hint when shown.
     /// Single source of truth so `showWithApps` and `removeSelectedApp` stay consistent.
     private func panelSize(showingHint: Bool) -> CGSize {
@@ -515,6 +579,8 @@ class AppSwitcherPanel: NSPanel, AppItemViewDelegate {
         let maxRowCount = rows.map { $0.count }.max() ?? 1
         var width = CGFloat(maxRowCount) * itemSize + CGFloat(maxRowCount - 1) * itemSpacing + panelPadding * 2
         var height = CGFloat(rowCount) * itemSize + CGFloat(rowCount - 1) * rowSpacing + panelPadding * 2
+            + nameLabelSpacing + nameLabelHeight
+        width = max(width, 160)
         if showingHint, let hint = hintView {
             let hintSize = hint.fittingSize
             height += rowSpacing + hintSize.height        // stack spacing + hint pill
@@ -536,6 +602,7 @@ class AppSwitcherPanel: NSPanel, AppItemViewDelegate {
         frame.origin.x = centerX - size.width / 2
         frame.origin.y = centerY - size.height / 2
         setFrame(frame, display: true)
+        updateCornerRadius()
     }
 
     /// Suppress hover briefly around a mid-open resize, restoring the
@@ -589,6 +656,16 @@ class AppSwitcherPanel: NSPanel, AppItemViewDelegate {
             for (colIndex, view) in row.enumerated() {
                 view.setSelected(rowIndex == selectedRow && colIndex == selectedColumn)
             }
+        }
+        nameLabel.stringValue = getSelectedApp()?.name ?? ""
+        // Pin the name under the selected tile (lower priority than the panel
+        // edges, so a long name near the edge shifts inward instead of clipping).
+        nameLabelCenterX?.isActive = false
+        if rows.indices.contains(selectedRow), rows[selectedRow].indices.contains(selectedColumn) {
+            let c = nameLabel.centerXAnchor.constraint(equalTo: rows[selectedRow][selectedColumn].centerXAnchor)
+            c.priority = .defaultHigh
+            c.isActive = true
+            nameLabelCenterX = c
         }
     }
 
@@ -682,7 +759,7 @@ private class DeclutterHintView: NSView {
 /// monitor goes silent and hover selection dies. This tracking area fires
 /// regardless of which app is active. Both paths call handleMouseMoved, which
 /// is idempotent, so double delivery is harmless.
-private class HoverTrackingVisualEffectView: NSVisualEffectView {
+private class HoverTrackingView: NSView {
     var onMouseMovement: (() -> Void)?
     private var hoverTrackingArea: NSTrackingArea?
 

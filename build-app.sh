@@ -52,6 +52,13 @@ fi
 # Copy binary to app bundle
 cp "$BINARY" "$APP_BUNDLE/Contents/MacOS/"
 
+# SwiftPM stamps the deployment target (12.0) as the SDK version, which makes
+# macOS run the app in legacy-appearance mode (no Liquid Glass). Record the
+# real SDK so NSGlassEffectView renders on macOS 26+.
+SDK_VERSION="$(xcrun --show-sdk-version)"
+vtool -set-build-version macos 12.0 "$SDK_VERSION" -replace \
+    -output "$APP_BUNDLE/Contents/MacOS/$BINARY_NAME" "$APP_BUNDLE/Contents/MacOS/$BINARY_NAME"
+
 # Copy Info.plist
 cp "$PROJECT_DIR/Info.plist" "$APP_BUNDLE/Contents/"
 
@@ -68,7 +75,7 @@ echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 
 # Ad-hoc code sign the app bundle
 echo "Code signing..."
-codesign --force --deep --sign - "$APP_BUNDLE"
+codesign --force --deep --sign "${SIGN_ID:--}" "$APP_BUNDLE"
 echo "Code signing complete"
 
 echo ""
