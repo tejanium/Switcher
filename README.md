@@ -1,5 +1,11 @@
 # Switcher
 
+> **Fork of [fad1/Switcher](https://github.com/fad1/Switcher)** with:
+> - **Cmd+`** window switcher (icon + title list of the front app's windows), replacing the native one
+> - **Hide apps** from the switcher (menu bar → Hidden from Switcher), and an option to show all running apps
+> - Native macOS 26 look: Liquid Glass panel, full-size icons, app name under the selected icon
+> - Signing with a stable identity via `SIGN_ID` so Accessibility permission survives rebuilds
+
 A fast, lightweight Cmd+Tab replacement for macOS. No bloat, no lag, no memory leaks.
 
 ## Why Switcher?

@@ -5,7 +5,7 @@
     <key>CFBundleExecutable</key>
     <string>SimpleSwitcher</string>
     <key>CFBundleIdentifier</key>
-    <string>com.simpleswitcher.app</string>
+    <string>local.tejanium.switcher</string>
     <key>CFBundleName</key>
     <string>Switcher</string>
     <key>CFBundleDisplayName</key>
